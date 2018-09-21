@@ -1,0 +1,200 @@
+DROP MATERIALIZED VIEW ODM.OS_COMPARE_MW;
+CREATE MATERIALIZED VIEW ODM.OS_COMPARE_MW 
+    (DBNAME,DB_CINUM,CINUM,TCELLPURPOSE,HOST,
+     PARAMETER,VALUE)
+TABLESPACE USERS
+PCTUSED    0
+PCTFREE    10
+INITRANS   2
+MAXTRANS   255
+STORAGE    (
+            INITIAL          64K
+            NEXT             1M
+            MINEXTENTS       1
+            MAXEXTENTS       UNLIMITED
+            PCTINCREASE      0
+            BUFFER_POOL      DEFAULT
+           )
+NOCACHE
+NOLOGGING
+NOCOMPRESS
+BUILD IMMEDIATE
+REFRESH FORCE
+START WITH TO_DATE('22-09-2018','dd-mm-yyyy')
+NEXT NEXT_DAY(TRUNC(SYSDATE), 7)                 
+WITH PRIMARY KEY
+AS 
+/* Formatted on 21.09.2018 10:46:28 (QP5 v5.318) */
+SELECT dbname,
+       db_cinum,
+       s.cinum,
+       tcellpurpose,
+       HOST,
+       parameter,
+       VALUE
+  FROM (  SELECT dbp.ciname                                  dbname,
+                 dbp.cinum                                   db_cinum,
+                 UPPER (REGEXP_REPLACE (s.ciname, '\..*', '')) sname,
+                 s.cinum,
+                 s.tcellpurpose
+            FROM (SELECT ciname, dbtype, cinum
+                    FROM maximo.ci@lk_turkuaz
+                   WHERE     classstructureid = '14825'
+                         AND tcellstatus = 'OPERATING'
+                         AND tcellpurpose IN ('PRODUCTION', 'BCP', 'ODM')) dbp,
+                 maximo.ci@lk_turkuaz        s,
+                 maximo.cirelation@lk_turkuaz r
+           WHERE     dbp.cinum = r.targetci
+                 AND s.cinum = r.sourceci
+                 AND s.tcellpurpose = 'PRODUCTION'
+                 AND s.classstructureid IN (6796, 6934, 11764)
+                 AND UPPER (dbp.dbtype) = 'ORACLE'
+        GROUP BY dbp.ciname,
+                 dbp.cinum,
+                 s.tcellpurpose,
+                 s.ciname,
+                 s.cinum
+        UNION ALL
+          SELECT dbp.ciname                                  dbname,
+                 dbp.cinum                                   db_cinum,
+                 UPPER (REGEXP_REPLACE (s.ciname, '\..*', '')) sname,
+                 s.cinum,
+                 s.tcellpurpose
+            FROM (SELECT ciname, dbtype, cinum
+                    FROM maximo.ci@lk_turkuaz
+                   WHERE     classstructureid = '14825'
+                         AND tcellstatus = 'OPERATING'
+                         AND tcellpurpose IN ('PRODUCTION', 'BCP', 'ODM')) dbp,
+                 maximo.ci@lk_turkuaz        s,
+                 maximo.cirelation@lk_turkuaz r
+           WHERE     dbp.cinum = r.targetci
+                 AND s.cinum = r.sourceci
+                 AND s.tcellpurpose IN ('BCP', 'ODM')
+                 AND s.classstructureid IN (6796, 6934, 11764)
+                 AND UPPER (dbp.dbtype) = 'ORACLE'
+        GROUP BY dbp.ciname,
+                 dbp.cinum,
+                 s.tcellpurpose,
+                 s.ciname,
+                 s.cinum) d,
+       (SELECT UPPER (HOST)      HOST,
+               UPPER (parameter) parameter,
+               VALUE,
+               t.cinum
+          FROM (SELECT HOST, parameter, VALUE FROM ODM.os_compare
+                UNION ALL
+                SELECT s.ciname, 'ISSOXCRITICAL', NVL (s.issoxcritical, 'No')
+                  FROM (SELECT ciname, dbtype, cinum
+                          FROM maximo.ci@lk_turkuaz
+                         WHERE     classstructureid = '14825'
+                               AND tcellstatus = 'OPERATING'
+                               AND tcellpurpose = 'PRODUCTION') dbp,
+                       maximo.ci@lk_turkuaz          s,
+                       maximo.cirelation@lk_turkuaz  r
+                 WHERE     dbp.cinum = r.targetci
+                       AND s.cinum = r.sourceci
+                       AND s.tcellpurpose IN ('PRODUCTION', 'BCP', 'ODM')
+                       AND s.classstructureid IN (6796, 6934, 11764)
+                UNION ALL
+                  SELECT hostname,
+                         'ssd_usage'     parameter,
+                         SUM (ssd) || 'GB' ssdusage
+                    FROM odm.storage_tier_history
+                   WHERE SUBSTR (dates, 1, 8) = TO_CHAR (SYSDATE, 'yyyymmdd')
+                GROUP BY hostname
+                UNION ALL
+                SELECT s.ciname, 'ISCDRDATA', NVL (s.iscdrdata, 'No')
+                  FROM (SELECT ciname, dbtype, cinum
+                          FROM maximo.ci@lk_turkuaz
+                         WHERE     classstructureid = '14825'
+                               AND tcellstatus = 'OPERATING'
+                               AND tcellpurpose = 'PRODUCTION') dbp,
+                       maximo.ci@lk_turkuaz          s,
+                       maximo.cirelation@lk_turkuaz  r
+                 WHERE     dbp.cinum = r.targetci
+                       AND s.cinum = r.sourceci
+                       AND s.tcellpurpose IN ('PRODUCTION', 'BCP', 'ODM')
+                       AND s.classstructureid IN (6796, 6934, 11764)) o,
+               maximo.ci@lk_turkuaz  t
+         WHERE     UPPER (REGEXP_REPLACE (o.HOST, '\..*', '')) =
+                   UPPER (REGEXP_REPLACE (t.ciname, '\..*', ''))
+               AND classstructureid IN ('6796', '6934', '11764')) s
+ WHERE d.cinum = s.cinum
+UNION ALL
+SELECT dbname,
+       db_cinum,
+       s.cinum,
+       tcellpurpose,
+       HOST,
+       parameter,
+       VALUE
+  FROM (  SELECT dbp.ciname                                  dbname,
+                 dbp.cinum                                   db_cinum,
+                 UPPER (REGEXP_REPLACE (s.ciname, '\..*', '')) sname,
+                 s.cinum,
+                 s.tcellpurpose
+            FROM (SELECT ciname, dbtype, cinum
+                    FROM maximo.ci@lk_turkuaz
+                   WHERE     classstructureid = '14825'
+                         AND tcellstatus = 'OPERATING'
+                         AND tcellpurpose IN ('PRODUCTION', 'BCP', 'ODM')) dbp,
+                 maximo.ci@lk_turkuaz        s,
+                 maximo.cirelation@lk_turkuaz r
+           WHERE     dbp.cinum = r.targetci
+                 AND s.cinum = r.sourceci
+                 AND s.tcellpurpose = 'PRODUCTION'
+                 AND s.classstructureid IN (6796, 6934, 11764)
+                 AND UPPER (dbp.dbtype) = 'ORACLE'
+        GROUP BY dbp.ciname,
+                 dbp.cinum,
+                 s.tcellpurpose,
+                 s.ciname,
+                 s.cinum
+        UNION ALL
+          SELECT dbp.ciname                                  dbname,
+                 dbp.cinum                                   db_cinum,
+                 UPPER (REGEXP_REPLACE (s.ciname, '\..*', '')) sname,
+                 s.cinum,
+                 s.tcellpurpose
+            FROM (SELECT ciname, dbtype, cinum
+                    FROM maximo.ci@lk_turkuaz
+                   WHERE     classstructureid = '14825'
+                         AND tcellstatus = 'OPERATING'
+                         AND tcellpurpose IN ('PRODUCTION', 'BCP', 'ODM')) dbp,
+                 maximo.ci@lk_turkuaz        s,
+                 maximo.cirelation@lk_turkuaz r
+           WHERE     dbp.cinum = r.targetci
+                 AND s.cinum = r.sourceci
+                 AND s.tcellpurpose IN ('BCP', 'ODM')
+                 AND s.classstructureid IN (6796, 6934, 11764)
+                 AND UPPER (dbp.dbtype) = 'ORACLE'
+        GROUP BY dbp.ciname,
+                 dbp.cinum,
+                 s.tcellpurpose,
+                 s.ciname,
+                 s.cinum) d,
+       (SELECT UPPER (HOST)      HOST,
+               UPPER (parameter) parameter,
+               VALUE,
+               t.cinum
+          FROM (  SELECT hostname
+                             HOST,
+                         'WWNSPEEDCOUNT'
+                             parameter,
+                            LISTAGG (speed, '-')
+                                WITHIN GROUP (ORDER BY hostname)
+                         || ';'
+                         || COUNT (*)
+                             VALUE
+                    FROM ODM.storage_wwn
+                GROUP BY hostname, speed) o,
+               maximo.ci@lk_turkuaz  t
+         WHERE     UPPER (REGEXP_REPLACE (o.HOST, '\..*', '')) =
+                   UPPER (REGEXP_REPLACE (t.ciname, '\..*', ''))
+               AND classstructureid IN ('6796', '6934', '11764')) s
+ WHERE d.cinum = s.cinum;
+
+
+COMMENT ON MATERIALIZED VIEW ODM.OS_COMPARE_MW IS 'snapshot table for snapshot ODM.OS_COMPARE_MW';
+
+GRANT SELECT ON ODM.OS_COMPARE_MW TO DASHBOARD;
