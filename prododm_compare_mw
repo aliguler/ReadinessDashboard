@@ -1,0 +1,337 @@
+DROP MATERIALIZED VIEW ODM.PRODODM_COMPARE;
+CREATE MATERIALIZED VIEW ODM.PRODODM_COMPARE 
+    (DBNAME,DB_CINUM,SCINUM,SCINAME,PCINUM,
+     PCINAME,PARAMETER,PVALUE,SVALUE,DATA_TYPE,
+     CLASS,CHECK_VALUE)
+TABLESPACE USERS
+PCTUSED    0
+PCTFREE    10
+INITRANS   2
+MAXTRANS   255
+STORAGE    (
+            INITIAL          64K
+            NEXT             1M
+            MINEXTENTS       1
+            MAXEXTENTS       UNLIMITED
+            PCTINCREASE      0
+            BUFFER_POOL      DEFAULT
+           )
+NOCACHE
+NOLOGGING
+NOCOMPRESS
+BUILD IMMEDIATE
+REFRESH FORCE
+START WITH TO_DATE('22-09-2018','dd-mm-yyyy')
+NEXT NEXT_DAY(TRUNC(SYSDATE), 7)                  
+WITH PRIMARY KEY
+AS 
+/* Formatted on 21.09.2018 10:57:39 (QP5 v5.318) */
+SELECT bcp.database,
+       bcp.db_cinum,
+       bcp.cinum
+           scinum,
+       bcp.ciname
+           sciname,
+       prod.cinum
+           pcinum,
+       prod.ciname
+           pciname,
+       prod.parameter,
+       prod.VALUE
+           pvalue,
+       bcp.VALUE
+           svalue,
+       p.data_type,
+       p.class,
+       CASE
+           WHEN     p.data_type = 'NUMBER'
+                AND REGEXP_REPLACE (UPPER (bcp.VALUE), '[A-Z]', '') >=
+                    REGEXP_REPLACE (UPPER (prod.VALUE), '[A-Z]', '') * 0.9
+           THEN
+               1
+           WHEN     p.data_type = 'NUMBER'
+                AND REGEXP_REPLACE (UPPER (bcp.VALUE), '[A-Z]', '') <
+                    REGEXP_REPLACE (UPPER (prod.VALUE), '[A-Z]', '') * 0.9
+           THEN
+               0
+           WHEN     p.data_type <> 'NUMBER'
+                AND UPPER (NVL (prod.VALUE, '-')) =
+                    UPPER (NVL (bcp.VALUE, '-'))
+           THEN
+               1
+           ELSE
+               0
+       END
+           check_value
+  FROM (SELECT  /*+ parallel(8) */
+               d.*, w.parameter, w.VALUE
+          FROM (SELECT dbname,
+                       db_cinum,
+                       'Oracle' dbtype,
+                       ciname,
+                       cinum
+                  FROM (  SELECT dbname,
+                                 db_cinum,
+                                 UPPER (REGEXP_REPLACE (HOST, '\..*', ''))
+                                     ciname,
+                                 cinum,
+                                 ROW_NUMBER ()
+                                 OVER (PARTITION BY dbname, db_cinum
+                                       ORDER BY COUNT (*) DESC, HOST ASC)
+                                     r
+                            FROM odm.os_compare_mw
+                           WHERE tcellpurpose = 'PRODUCTION'
+                        GROUP BY dbname,
+                                 db_cinum,
+                                 HOST,
+                                 cinum)
+                 WHERE r = 1) d,
+               odm.os_compare_mw  w
+         WHERE d.db_cinum = w.db_cinum AND d.cinum = w.cinum) prod,
+       (SELECT dbp.ciname dbname,
+               dbp.cinum  db_cinum,
+               dbp.dbtype,
+               s.ciname,
+               s.cinum,
+               d.database,
+               w.parameter,
+               w.VALUE
+          FROM (SELECT ciname, dbtype, cinum
+                  FROM maximo.ci@lk_turkuaz
+                 WHERE     classstructureid = '14825'
+                       AND tcellstatus = 'OPERATING'
+                       AND tcellpurpose = 'PRODUCTION') dbp,
+               maximo.ci@lk_turkuaz          s,
+               maximo.cirelation@lk_turkuaz  r,
+               odm.drtsdash                  d,
+               odm.os_compare_mw             w
+         WHERE     dbp.cinum = r.targetci
+               AND s.cinum = r.sourceci
+               AND s.tcellpurpose IN ('BCP', 'ODM')
+               AND s.classstructureid IN (6796, 6934, 11764)
+               AND UPPER (dbp.dbtype) = 'ORACLE'
+               AND dbp.cinum = d.db_cinum
+               AND s.cinum = d.server_cinum
+               AND dbp.cinum = w.db_cinum
+               AND s.cinum = w.cinum) bcp,
+       odm.os_parameter  p
+ WHERE     prod.db_cinum = bcp.db_cinum
+       AND UPPER (prod.parameter) = UPPER (bcp.parameter)
+       AND UPPER (prod.parameter) = UPPER (p.parameter)
+UNION ALL
+SELECT stand.dbname
+           database,
+       stand.db_cinum,
+       stand.scinum,
+       stand.sciname,
+       prod.scinum
+           pcinum,
+       prod.sciname
+           pciname,
+       prod.init_param_name
+           parameter,
+       prod.ipv
+           pvalue,
+       stand.ipv
+           svalue,
+       prod.TYPE
+           data_type,
+       'Database'
+           class,
+       CASE
+           WHEN prod.TYPE = 'performance' AND stand.ipv >= prod.ipv * 0.9
+           THEN
+               1
+           WHEN prod.TYPE = 'performance' AND stand.ipv < prod.ipv * .09
+           THEN
+               0
+           WHEN     prod.TYPE <> 'performance'
+                AND UPPER (NVL (stand.ipv, '-')) =
+                    UPPER (NVL (prod.ipv, '-'))
+           THEN
+               1
+           ELSE
+               0
+       END
+           check_value
+  FROM (SELECT UPPER (pdb) dbname,
+               init_param_name,
+               ipv,
+               TYPE,
+               s.cinum     scinum,
+               s.ciname    sciname,
+               db_cinum
+          FROM (SELECT  /*+ parallel(8) */
+                       NVL (l.tdbname, pdb)         pdb,
+                       NVL (init_param_name, pname) init_param_name,
+                       NVL (ipv, pvalue)            ipv,
+                       NVL (k.TYPE, l.TYPE)         TYPE
+                  FROM (  SELECT SUBSTR (
+                                     target_name,
+                                     1,
+                                     DECODE (INSTR (target_name, '_'),
+                                             0, LENGTH (target_name),
+                                             INSTR (target_name, '_') - 1))
+                                     pdb,
+                                 init_param_name,
+                                 TYPE,
+                                 MAX (init_param_value)
+                                     ipv
+                            FROM sysman.MGMT$CS_DB_INIT_PARAMS@lk_gridprod  p,
+                                 sysman.mgmt$target@lk_gridprod             t,
+                                 sysman.turkcell$track_parameters@lk_gridodm c
+                           WHERE     p.target_guid = t.target_guid
+                                 AND UPPER (p.init_param_name) =
+                                     UPPER (c.parameter_name)
+                        GROUP BY SUBSTR (
+                                     target_name,
+                                     1,
+                                     DECODE (INSTR (target_name, '_'),
+                                             0, LENGTH (target_name),
+                                             INSTR (target_name, '_') - 1)),
+                                 init_param_name,
+                                 TYPE) k
+                       FULL OUTER JOIN
+                       (SELECT fp.dbname,
+                               fp.tdbname,
+                               fp.pname,
+                               fp.db_cinum,
+                               NVL (de.pvalue, 0) pvalue,
+                               TYPE
+                          FROM (SELECT UPPER (NVL (turkuaz_dbname, database))
+                                           tdbname,
+                                       UPPER (database)
+                                           dbname,
+                                       UPPER (parameter_name)
+                                           pname,
+                                       TYPE,
+                                       d.db_cinum
+                                  FROM sysman.turkcell$track_parameters@lk_gridodm
+                                       p,
+                                       odm.drtsdash  d) fp,
+                               (  SELECT UPPER (dbname)     dbname,
+                                         UPPER (pname)      pname,
+                                         MAX (UPPER (pvalue)) pvalue
+                                    FROM odm.prod_parameters
+                                   WHERE end_date =
+                                         TO_DATE ('99991231', 'yyyymmdd')
+                                GROUP BY UPPER (dbname), UPPER (pname)) de
+                         WHERE fp.dbname = de.dbname AND fp.pname = de.pname)
+                       l
+                           ON     UPPER (k.pdb) = UPPER (l.tdbname)
+                              AND UPPER (k.init_param_name) = UPPER (l.pname))
+               d,
+               (SELECT dbname,
+                       db_cinum,
+                       dbtype,
+                       ciname,
+                       cinum
+                  FROM (SELECT dbp.ciname
+                                   dbname,
+                               dbp.cinum
+                                   db_cinum,
+                               dbp.dbtype,
+                               s.ciname,
+                               s.cinum,
+                               ROW_NUMBER ()
+                               OVER (
+                                   PARTITION BY dbp.ciname,
+                                                dbp.cinum,
+                                                dbp.dbtype
+                                   ORDER BY s.ciname)
+                                   name_rank
+                          FROM (SELECT ciname, dbtype, cinum
+                                  FROM maximo.ci@lk_turkuaz
+                                 WHERE     classstructureid = '14825'
+                                       AND tcellstatus = 'OPERATING'
+                                       AND tcellpurpose = 'PRODUCTION') dbp,
+                               maximo.ci@lk_turkuaz          s,
+                               maximo.cirelation@lk_turkuaz  r
+                         WHERE     dbp.cinum = r.targetci
+                               AND s.cinum = r.sourceci
+                               AND s.tcellpurpose = 'PRODUCTION'
+                               AND s.classstructureid IN (6796, 6934, 11764))
+                 WHERE name_rank = 1 AND UPPER (dbtype) = 'ORACLE') s
+         WHERE UPPER (d.pdb) = UPPER (s.dbname)) prod,
+       (SELECT UPPER (sdb)                  dbname,
+               init_param_name,
+               ipv,
+               TYPE,
+               s.cinum                      scinum,
+               s.ciname                     sciname,
+               NVL (d.db_cinum, s.db_cinum) db_cinum
+          FROM (SELECT  /*+ parallel(8) */
+                       NVL (l.dbname, sdb)          sdb,
+                       l.db_cinum,
+                       NVL (init_param_name, pname) init_param_name,
+                       NVL (ipv, pvalue)            ipv,
+                       NVL (k.TYPE, l.TYPE)         TYPE,
+                       scinum,
+                       sciname
+                  FROM (SELECT REPLACE (target_name, 'ODM_') sdb,
+                               UPPER (init_param_name)       init_param_name,
+                               TYPE,
+                               init_param_value              ipv
+                          FROM MGMT$CS_DB_INIT_PARAMS@lk_gridodm            p,
+                               mgmt$target@lk_gridodm                       t,
+                               sysman.turkcell$track_parameters@lk_gridodm  c
+                         WHERE     p.target_guid = t.target_guid
+                               AND UPPER (p.init_param_name) =
+                                   UPPER (c.parameter_name)
+                               AND target_name NOT LIKE '%DAY%') k
+                       FULL OUTER JOIN
+                       (SELECT fp.dbname,
+                               fp.pname,
+                               fp.db_cinum,
+                               NVL (de.pvalue, 0) pvalue,
+                               TYPE,
+                               fp.scinum,
+                               fp.sciname
+                          FROM (SELECT UPPER (database)       dbname,
+                                       UPPER (parameter_name) pname,
+                                       TYPE,
+                                       d.db_cinum,
+                                       d.server_cinum         scinum,
+                                       d.HOST                 sciname
+                                  FROM sysman.turkcell$track_parameters@lk_gridodm
+                                       p,
+                                       odm.drtsdash  d) fp,
+                               (  SELECT UPPER (dbname)     dbname,
+                                         UPPER (pname)      pname,
+                                         MAX (UPPER (pvalue)) pvalue
+                                    FROM odm.stand_parameters
+                                   WHERE end_date =
+                                         TO_DATE ('99991231', 'yyyymmdd')
+                                GROUP BY UPPER (dbname), UPPER (pname)) de
+                         WHERE fp.dbname = de.dbname AND fp.pname = de.pname)
+                       l
+                           ON     UPPER (k.sdb) = UPPER (l.dbname)
+                              AND UPPER (k.init_param_name) = UPPER (l.pname))
+               d,
+               (SELECT dbp.ciname dbname,
+                       dbp.cinum  db_cinum,
+                       dbp.dbtype,
+                       s.ciname,
+                       s.cinum
+                  FROM (SELECT ciname, dbtype, cinum
+                          FROM maximo.ci@lk_turkuaz
+                         WHERE     classstructureid = '14825'
+                               AND tcellstatus = 'OPERATING'
+                               AND tcellpurpose = 'PRODUCTION') dbp,
+                       maximo.ci@lk_turkuaz          s,
+                       maximo.cirelation@lk_turkuaz  r
+                 WHERE     dbp.cinum = r.targetci
+                       AND s.cinum = r.sourceci
+                       AND s.tcellpurpose IN ('BCP', 'ODM')
+                       AND s.classstructureid IN (6796, 6934, 11764)
+                       AND UPPER (dbp.dbtype) = 'ORACLE') s
+         WHERE d.db_cinum = s.db_cinum AND d.scinum = s.cinum) stand
+ WHERE     prod.db_cinum = stand.db_cinum
+       AND UPPER (prod.init_param_name) = UPPER (stand.init_param_name);
+
+
+COMMENT ON MATERIALIZED VIEW ODM.PRODODM_COMPARE IS 'snapshot table for snapshot ODM.PRODODM_COMPARE';
+
+GRANT SELECT ON ODM.PRODODM_COMPARE TO DASHBOARD;
+
+GRANT SELECT ON ODM.PRODODM_COMPARE TO TCACOTEN;
